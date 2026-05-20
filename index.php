@@ -1,16 +1,17 @@
 <?php
 define('DND_APP', true);
-date_default_timezone_set('America/New_York');
 
 if (!file_exists(__DIR__ . '/config.php')) {
     file_put_contents(__DIR__ . '/config.php',
-        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', 'admin123');\ndefine('SITE_PASSWORD', 'NEON');\ndefine('SITE_TITLE', 'D&D Session Scheduler');\ndefine('SITE_SUBTITLE', 'Insert coin to continue \xe2\x80\x94 select your session');\n");
+        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', 'admin123');\ndefine('SITE_PASSWORD', 'NEON');\ndefine('SITE_TITLE', 'D&D Session Scheduler');\ndefine('SITE_SUBTITLE', 'Insert coin to continue \xe2\x80\x94 select your session');\ndefine('SITE_TIMEZONE', 'America/New_York');\n");
 }
 require_once __DIR__ . '/config.php';
 
 if (!defined('SITE_TITLE'))    define('SITE_TITLE',    'D&D Session Scheduler');
-if (!defined('SITE_SUBTITLE')) define('SITE_SUBTITLE', 'Insert coin to continue \xe2\x80\x94 select your session');
+if (!defined('SITE_SUBTITLE')) define('SITE_SUBTITLE', "Insert coin to continue \xe2\x80\x94 select your session");
 if (!defined('SITE_PASSWORD')) define('SITE_PASSWORD', 'NEON');
+if (!defined('SITE_TIMEZONE')) define('SITE_TIMEZONE', 'America/New_York');
+date_default_timezone_set(SITE_TIMEZONE);
 
 session_start();
 
@@ -61,9 +62,6 @@ if (empty($_SESSION['dnd_site_auth'])) {
         <button type="submit" class="btn btn-primary">Enter</button>
     </form>
 </div>
-<footer style="text-align:center;padding:28px 0 0;color:#2a1040;font-size:.72rem;letter-spacing:2px;text-transform:uppercase">
-    Game Over &nbsp;//&nbsp; <?= date('Y') ?>
-</footer>
 </div>
 </body>
 </html><?php
@@ -96,8 +94,9 @@ function updatePassword(string $pw): void {
     $title    = defined('SITE_TITLE')    ? SITE_TITLE    : 'D&D Session Scheduler';
     $subtitle = defined('SITE_SUBTITLE') ? SITE_SUBTITLE : 'Insert coin to continue — select your session';
     $sitepw   = defined('SITE_PASSWORD') ? SITE_PASSWORD : 'NEON';
+    $timezone = defined('SITE_TIMEZONE') ? SITE_TIMEZONE : 'America/New_York';
     file_put_contents(__DIR__ . '/config.php',
-        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\n");
+        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\n");
 }
 
 function getAvailableDates(array $settings): array {
@@ -130,6 +129,14 @@ function slotsFull(array $data, string $date): bool {
 }
 
 $data     = loadData();
+
+// Prune sign-ups for dates that have already passed
+$_today = date('Y-m-d');
+$_before = count($data['signups']);
+$data['signups'] = array_values(array_filter($data['signups'], fn($s) => $s['date'] >= $_today));
+if (count($data['signups']) < $_before) saveData($data);
+unset($_today, $_before);
+
 $maxSlots = (int)($data['settings']['max_slots'] ?? 0);
 $flash    = '';
 $flashType = '';
@@ -237,13 +244,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newsitepw   = trim($_POST['new_site_pw']  ?? '');
         $newtitle    = trim($_POST['new_title']    ?? '');
         $newsubtitle = trim($_POST['new_subtitle'] ?? '');
-        if ($newpw !== '' || $newsitepw !== '' || $newtitle !== '' || $newsubtitle !== '') {
+        $newtimezone = trim($_POST['new_timezone'] ?? '');
+        $validTz     = $newtimezone !== '' && in_array($newtimezone, DateTimeZone::listIdentifiers(), true);
+        if ($newpw !== '' || $newsitepw !== '' || $newtitle !== '' || $newsubtitle !== '' || $validTz) {
             $pw       = $newpw       !== '' ? $newpw       : ADMIN_PASSWORD;
             $sitepw   = $newsitepw   !== '' ? $newsitepw   : SITE_PASSWORD;
             $title    = $newtitle    !== '' ? $newtitle    : SITE_TITLE;
             $subtitle = $newsubtitle !== '' ? $newsubtitle : SITE_SUBTITLE;
+            $timezone = $validTz            ? $newtimezone : SITE_TIMEZONE;
             file_put_contents(__DIR__ . '/config.php',
-                "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\n");
+                "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\n");
         }
         $flash = 'Settings saved.'; $flashType = 'success';
 
@@ -268,16 +278,17 @@ foreach ($data['signups'] as $i => $s) {
     $byDate[$s['date']][] = ['name' => $s['name'], 'idx' => $i];
 }
 
-// Admin report: counts per DOW
 $sortedDays = $data['settings']['allowed_days'];
 usort($sortedDays, fn($a, $b) => ($a === 0 ? 7 : $a) <=> ($b === 0 ? 7 : $b));
 
-$dowCounts = [];
-foreach ($sortedDays as $dow) $dowCounts[$dow] = 0;
-foreach ($data['signups'] as $s) {
-    $dow = (int)date('w', strtotime($s['date']));
-    if (isset($dowCounts[$dow])) $dowCounts[$dow]++;
+// Admin report: top 3 dates by sign-up count
+$dateCounts = [];
+foreach ($available as $d) {
+    $cnt = count($byDate[$d] ?? []);
+    if ($cnt > 0) $dateCounts[$d] = $cnt;
 }
+arsort($dateCounts);
+$topDates = array_slice($dateCounts, 0, 3, true);
 
 // Week grouping
 $byWeek = [];
@@ -332,7 +343,7 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 <div class="card">
     <div class="card-title">Pick Your Sessions</div>
     <div class="time-badge">
-        🕖 Sessions run <?= fmt12($data['settings']['time_start']) ?> &ndash; <?= fmt12($data['settings']['time_end']) ?> EST
+        🕖 Sessions run <?= fmt12($data['settings']['time_start']) ?> &ndash; <?= fmt12($data['settings']['time_end']) ?> <?= date('T') ?>
         <?php if ($maxSlots > 0): ?>
         <span class="slots-badge">Max <?= $maxSlots ?> per session</span>
         <?php endif; ?>
@@ -414,26 +425,20 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 <!-- Admin report -->
 <?php if (isAdmin()): ?>
 <div class="card">
-    <div class="card-title">📊 Best Days</div>
-    <?php if (empty($data['signups'])): ?>
+    <div class="card-title">📊 Best Dates</div>
+    <?php if (empty($topDates)): ?>
         <p class="no-dates">No sign-ups yet.</p>
-    <?php else:
-        $maxDow = max($dowCounts); ?>
-    <table class="report-table">
-        <thead><tr>
-            <?php foreach ($sortedDays as $dow): ?>
-            <th><?= $DAY_FULL[$dow] ?></th>
-            <?php endforeach; ?>
-            <th>Total</th>
-        </tr></thead>
-        <tbody><tr>
-            <?php foreach ($sortedDays as $dow): $v = $dowCounts[$dow] ?? 0; ?>
-            <td class="report-count <?= ($v === $maxDow && $v > 0) ? 'report-best' : '' ?>"><?= $v ?: '—' ?></td>
-            <?php endforeach; ?>
-            <td class="report-total"><?= array_sum($dowCounts) ?></td>
-        </tr></tbody>
-    </table>
-    <?php endif; ?>
+    <?php else: $rank = 1; foreach ($topDates as $d => $cnt):
+        $dow = (int)date('w', strtotime($d)); ?>
+    <div class="top-date-row rank-<?= $rank ?>">
+        <span class="top-rank">#<?= $rank ?></span>
+        <span class="top-date-info">
+            <span class="top-dow"><?= $DAY_FULL[$dow] ?></span>
+            <span class="top-mdate"><?= date('M j, Y', strtotime($d)) ?></span>
+        </span>
+        <span class="top-date-count"><?= $cnt ?> player<?= $cnt !== 1 ? 's' : '' ?></span>
+    </div>
+    <?php $rank++; endforeach; endif; ?>
 </div>
 
 <!-- Admin settings -->
@@ -468,6 +473,27 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
                     <input type="time" name="time_end" value="<?= htmlspecialchars($data['settings']['time_end']) ?>">
                 </div>
             </div>
+        </div>
+
+        <div class="field">
+            <label>Timezone <span class="field-note">— currently <?= htmlspecialchars(SITE_TIMEZONE) ?> (<?= date('T') ?>)</span></label>
+            <select name="new_timezone" style="max-width:300px">
+                <?php
+                $tzGroups = [];
+                foreach (DateTimeZone::listIdentifiers() as $tz) {
+                    $parts = explode('/', $tz, 2);
+                    $group = count($parts) > 1 ? $parts[0] : 'Other';
+                    $tzGroups[$group][] = $tz;
+                }
+                foreach ($tzGroups as $grp => $zones):
+                ?>
+                <optgroup label="<?= htmlspecialchars($grp) ?>">
+                    <?php foreach ($zones as $tz): ?>
+                    <option value="<?= htmlspecialchars($tz) ?>"<?= $tz === SITE_TIMEZONE ? ' selected' : '' ?>><?= htmlspecialchars(str_replace('_', ' ', $tz)) ?></option>
+                    <?php endforeach; ?>
+                </optgroup>
+                <?php endforeach; ?>
+            </select>
         </div>
 
         <div class="field">
@@ -518,9 +544,6 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 </div>
 <?php endif; ?>
 
-<footer style="text-align:center;padding:28px 0 0;color:#2a1040;font-size:.72rem;letter-spacing:2px;text-transform:uppercase">
-    Game Over &nbsp;//&nbsp; <?= date('Y') ?>
-</footer>
 </div>
 
 <script>
