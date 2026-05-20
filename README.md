@@ -9,9 +9,9 @@ A single-file PHP app for scheduling D&D sessions. Players pick available dates;
 
 ## Setup
 
-1. edit your config.php so you don't have default passwords!
-2. Drop the files into your web root (or any folder your server serves).
-
+1. Drop the files into your web root (or any folder your server serves).
+2. Enter the admincode and change all your passwords and settings
+3. Update the banner.png to whatever you want at the top!
 
 ## Usage
 
@@ -24,4 +24,6 @@ A single-file PHP app for scheduling D&D sessions. Players pick available dates;
 - Change the site title, subtitle, site password, and admin password
 - Remove individual sign-ups from the session grid
 
-##
+##Credits
+
+Banner image is from Neon Odyssey credit goes to them https://www.kickstarter.com/projects/legendsofavantris/neon-odyssey
