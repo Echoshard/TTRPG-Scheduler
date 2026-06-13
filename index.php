@@ -134,8 +134,19 @@ $data     = loadData();
 $_today = date('Y-m-d');
 $_before = count($data['signups']);
 $data['signups'] = array_values(array_filter($data['signups'], fn($s) => $s['date'] >= $_today));
+
+// Retroactively drop duplicate sign-ups: one name (case-insensitive) per date.
+// Keeps the first occurrence; later duplicates are removed.
+$_seen = [];
+$data['signups'] = array_values(array_filter($data['signups'], function ($s) use (&$_seen) {
+    $key = strtolower(trim($s['name'])) . '|' . $s['date'];
+    if (isset($_seen[$key])) return false;
+    $_seen[$key] = true;
+    return true;
+}));
+
 if (count($data['signups']) < $_before) saveData($data);
-unset($_today, $_before);
+unset($_today, $_before, $_seen);
 
 $maxSlots = (int)($data['settings']['max_slots'] ?? 0);
 $flash    = '';
@@ -163,6 +174,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if (!$removed) {
+            // Guard against a duplicate slipping in (e.g. double-submit / race).
+            foreach ($data['signups'] as $s) {
+                if (strcasecmp($s['name'], $name) === 0 && $s['date'] === $date) {
+                    echo json_encode(['success' => false, 'error' => 'Already signed up for that date.']); exit;
+                }
+            }
             if (slotsFull($data, $date)) {
                 echo json_encode(['success' => false, 'error' => 'Session is full.']); exit;
             }
