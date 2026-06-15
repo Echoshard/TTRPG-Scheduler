@@ -1,0 +1,8 @@
+# Runtime data (sign-ups, settings)
+dnd_data.json
+
+# Generated credentials/config
+config.php
+
+# Admin-uploaded custom banner
+banner_custom.png

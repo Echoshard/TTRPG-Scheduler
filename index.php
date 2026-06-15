@@ -3,7 +3,7 @@ define('DND_APP', true);
 
 if (!file_exists(__DIR__ . '/config.php')) {
     file_put_contents(__DIR__ . '/config.php',
-        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', 'admin123');\ndefine('SITE_PASSWORD', 'NEON');\ndefine('SITE_TITLE', 'D&D Session Scheduler');\ndefine('SITE_SUBTITLE', 'Insert coin to continue \xe2\x80\x94 select your session');\ndefine('SITE_TIMEZONE', 'America/New_York');\n");
+        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', 'admin123');\ndefine('SITE_PASSWORD', 'NEON');\ndefine('SITE_TITLE', 'D&D Session Scheduler');\ndefine('SITE_SUBTITLE', 'Insert coin to continue \xe2\x80\x94 select your session');\ndefine('SITE_TIMEZONE', 'America/New_York');\ndefine('REQUIRE_LOGIN', true);\ndefine('DEFAULT_THEME', 'neon');\n");
 }
 require_once __DIR__ . '/config.php';
 
@@ -11,30 +11,92 @@ if (!defined('SITE_TITLE'))    define('SITE_TITLE',    'D&D Session Scheduler');
 if (!defined('SITE_SUBTITLE')) define('SITE_SUBTITLE', "Insert coin to continue \xe2\x80\x94 select your session");
 if (!defined('SITE_PASSWORD')) define('SITE_PASSWORD', 'NEON');
 if (!defined('SITE_TIMEZONE')) define('SITE_TIMEZONE', 'America/New_York');
+if (!defined('REQUIRE_LOGIN'))  define('REQUIRE_LOGIN',  true);
+if (!defined('DEFAULT_THEME'))  define('DEFAULT_THEME',  'neon');
 date_default_timezone_set(SITE_TIMEZONE);
+
+define('DATA_FILE', __DIR__ . '/dnd_data.json');
+
+function loadData(): array {
+    $defaultTheme = defined('DEFAULT_THEME') ? DEFAULT_THEME : 'neon';
+    if (file_exists(DATA_FILE)) {
+        $d = json_decode(file_get_contents(DATA_FILE), true);
+        if (is_array($d)) {
+            if (!isset($d['blocked_dates'])) {
+                $d['blocked_dates'] = [];
+            }
+            if (!isset($d['settings']['theme'])) {
+                $d['settings']['theme'] = $defaultTheme;
+            }
+            if (!isset($d['settings']['banner_mode'])) {
+                $d['settings']['banner_mode'] = 'default';
+            }
+            return $d;
+        }
+    }
+    return [
+        'settings' => [
+            'allowed_days' => [4, 5, 6, 0],
+            'time_start'   => '19:00',
+            'time_end'     => '23:00',
+            'max_slots'    => 0,
+            'theme'        => $defaultTheme,
+            'banner_mode'  => 'default',
+        ],
+        'blocked_dates' => [],
+        'signups' => []
+    ];
+}
+
+function saveData(array $data): void {
+    file_put_contents(DATA_FILE, json_encode($data, JSON_PRETTY_PRINT));
+}
+
+$data = loadData();
 
 session_start();
 
-// ── Site-level password gate ──────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'site_login') {
-    if (($_POST['site_password'] ?? '') === SITE_PASSWORD) {
-        $_SESSION['dnd_site_auth']  = true;
-        unset($_SESSION['dnd_site_flash']);
+// Calculate banner and theme variables for consistent styling
+$currentTheme = $data['settings']['theme'] ?? (defined('DEFAULT_THEME') ? DEFAULT_THEME : 'neon');
+$bannerMode   = $data['settings']['banner_mode'] ?? 'default';
+$bannerUrl    = 'banner.png';
+if ($bannerMode === 'custom' && file_exists(__DIR__ . '/banner_custom.png')) {
+    $bannerUrl = 'banner_custom.png';
+} else {
+    if ($currentTheme === 'fantasy') {
+        $bannerUrl = 'banner_fantasy.png';
+    } elseif ($currentTheme === 'scifi') {
+        $bannerUrl = 'banner_scifi.png';
+    } elseif ($currentTheme === 'grimdark') {
+        $bannerUrl = 'banner_grimdark.png';
+    } elseif ($currentTheme === 'steampunk') {
+        $bannerUrl = 'banner_ebberon.png';
     } else {
-        $_SESSION['dnd_site_flash'] = 'Incorrect password.';
+        $bannerUrl = 'banner_neon.png';
     }
-    header('Location: ' . $_SERVER['PHP_SELF']); exit;
 }
 
-if (empty($_SESSION['dnd_site_auth'])) {
-    $siteFlash = $_SESSION['dnd_site_flash'] ?? '';
-    unset($_SESSION['dnd_site_flash']);
-    $ajaxActions = ['toggle_signup', 'toggle_day'];
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', $ajaxActions, true)) {
-        header('Content-Type: application/json');
-        echo json_encode(['success' => false, 'error' => 'Not authenticated']); exit;
+// ── Site-level password gate ──────────────────────────────────────────
+if (REQUIRE_LOGIN) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'site_login') {
+        if (($_POST['site_password'] ?? '') === SITE_PASSWORD) {
+            $_SESSION['dnd_site_auth']  = true;
+            unset($_SESSION['dnd_site_flash']);
+        } else {
+            $_SESSION['dnd_site_flash'] = 'Incorrect password.';
+        }
+        header('Location: ' . $_SERVER['PHP_SELF']); exit;
     }
-    ?><!DOCTYPE html>
+
+    if (empty($_SESSION['dnd_site_auth'])) {
+        $siteFlash = $_SESSION['dnd_site_flash'] ?? '';
+        unset($_SESSION['dnd_site_flash']);
+        $ajaxActions = ['toggle_signup', 'toggle_day'];
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', $ajaxActions, true)) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => 'Not authenticated']); exit;
+        }
+        ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -42,8 +104,8 @@ if (empty($_SESSION['dnd_site_auth'])) {
 <title><?= htmlspecialchars(SITE_TITLE) ?></title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<div class="alive-banner" id="main-banner" style="background-image:url('banner.png')"></div>
+<body class="theme-<?= htmlspecialchars($currentTheme) ?>">
+<div class="alive-banner" id="main-banner" style="background-image:url('<?= htmlspecialchars($bannerUrl) ?>')"></div>
 <div class="wrap">
 <header class="hdr">
     <h1 class="hdr-title"><?= htmlspecialchars(SITE_TITLE) ?></h1>
@@ -65,38 +127,20 @@ if (empty($_SESSION['dnd_site_auth'])) {
 </div>
 </body>
 </html><?php
-    exit;
-}
-// ─────────────────────────────────────────────────────────────────────
-define('DATA_FILE', __DIR__ . '/dnd_data.json');
-
-function loadData(): array {
-    if (file_exists(DATA_FILE)) {
-        $d = json_decode(file_get_contents(DATA_FILE), true);
-        if (is_array($d)) return $d;
+        exit;
     }
-    return [
-        'settings' => [
-            'allowed_days' => [4, 5, 6, 0],
-            'time_start'   => '19:00',
-            'time_end'     => '23:00',
-            'max_slots'    => 0,
-        ],
-        'signups' => []
-    ];
 }
 
-function saveData(array $data): void {
-    file_put_contents(DATA_FILE, json_encode($data, JSON_PRETTY_PRINT));
-}
 
 function updatePassword(string $pw): void {
     $title    = defined('SITE_TITLE')    ? SITE_TITLE    : 'D&D Session Scheduler';
     $subtitle = defined('SITE_SUBTITLE') ? SITE_SUBTITLE : 'Insert coin to continue — select your session';
     $sitepw   = defined('SITE_PASSWORD') ? SITE_PASSWORD : 'NEON';
     $timezone = defined('SITE_TIMEZONE') ? SITE_TIMEZONE : 'America/New_York';
+    $reqlogin = defined('REQUIRE_LOGIN')  ? REQUIRE_LOGIN  : true;
+    $deftheme = defined('DEFAULT_THEME')  ? DEFAULT_THEME  : 'neon';
     file_put_contents(__DIR__ . '/config.php',
-        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\n");
+        "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\ndefine('REQUIRE_LOGIN', " . var_export($reqlogin, true) . ");\ndefine('DEFAULT_THEME', " . var_export($deftheme, true) . ");\n");
 }
 
 function getAvailableDates(array $settings): array {
@@ -166,6 +210,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['success' => false, 'error' => 'Invalid input']); exit;
         }
 
+        $blocked = in_array($date, $data['blocked_dates'] ?? [], true);
+        if ($blocked) {
+            echo json_encode(['success' => false, 'error' => 'This session is blocked by the DM.']); exit;
+        }
+
         $removed = false;
         foreach ($data['signups'] as $i => $s) {
             if (strcasecmp($s['name'], $name) === 0 && $s['date'] === $date) {
@@ -180,11 +229,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     echo json_encode(['success' => false, 'error' => 'Already signed up for that date.']); exit;
                 }
             }
-            if (slotsFull($data, $date)) {
-                echo json_encode(['success' => false, 'error' => 'Session is full.']); exit;
-            }
-            $data['signups'][] = ['name' => $name, 'date' => $date];
-            usort($data['signups'], fn($a, $b) => $a['date'] <=> $b['date']);
+            $data['signups'][] = ['name' => $name, 'date' => $date, 'created_at' => microtime(true)];
+            usort($data['signups'], function ($a, $b) {
+                if ($a['date'] === $b['date']) {
+                    return ($a['created_at'] ?? 0) <=> ($b['created_at'] ?? 0);
+                }
+                return $a['date'] <=> $b['date'];
+            });
         }
         saveData($data);
         $data = loadData();
@@ -222,11 +273,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (strcasecmp($s['name'], $name) === 0) $existing[] = $s['date'];
             }
             foreach ($dayDates as $d) {
-                if (!in_array($d, $existing, true) && !slotsFull($data, $d)) {
-                    $data['signups'][] = ['name' => $name, 'date' => $d];
+                $isBlocked = in_array($d, $data['blocked_dates'] ?? [], true);
+                if ($isBlocked) continue;
+                if (!in_array($d, $existing, true)) {
+                    $data['signups'][] = ['name' => $name, 'date' => $d, 'created_at' => microtime(true)];
                 }
             }
-            usort($data['signups'], fn($a, $b) => $a['date'] <=> $b['date']);
+            usort($data['signups'], function ($a, $b) {
+                if ($a['date'] === $b['date']) {
+                    return ($a['created_at'] ?? 0) <=> ($b['created_at'] ?? 0);
+                }
+                return $a['date'] <=> $b['date'];
+            });
         }
         saveData($data);
         $data = loadData();
@@ -255,6 +313,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (preg_match('/^\d{2}:\d{2}$/', $ts)) $data['settings']['time_start'] = $ts;
         if (preg_match('/^\d{2}:\d{2}$/', $te)) $data['settings']['time_end']   = $te;
         $data['settings']['max_slots'] = max(0, (int)($_POST['max_slots'] ?? 0));
+        
+        // Save Theme
+        $theme = $_POST['theme'] ?? 'neon';
+        if (in_array($theme, ['neon', 'scifi', 'fantasy', 'grimdark', 'steampunk'], true)) {
+            $data['settings']['theme'] = $theme;
+        }
+
+        // Reset Banner Mode if checked
+        if (isset($_POST['reset_banner'])) {
+            $data['settings']['banner_mode'] = 'default';
+        }
+
+        // Handle Banner Image Upload
+        if (isset($_FILES['banner_image']) && $_FILES['banner_image']['error'] === UPLOAD_ERR_OK) {
+            $fileTmpPath = $_FILES['banner_image']['tmp_name'];
+            $fileName = $_FILES['banner_image']['name'];
+            
+            $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif'];
+            $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            
+            if (in_array($fileExtension, $allowedExtensions, true)) {
+                $dest_path = __DIR__ . '/banner_custom.png';
+                if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    $data['settings']['banner_mode'] = 'custom';
+                }
+            }
+        }
+
         saveData($data);
         // Update config.php if any credential or title changed
         $newpw       = trim($_POST['new_pw']       ?? '');
@@ -263,14 +349,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newsubtitle = trim($_POST['new_subtitle'] ?? '');
         $newtimezone = trim($_POST['new_timezone'] ?? '');
         $validTz     = $newtimezone !== '' && in_array($newtimezone, DateTimeZone::listIdentifiers(), true);
-        if ($newpw !== '' || $newsitepw !== '' || $newtitle !== '' || $newsubtitle !== '' || $validTz) {
+        $reqlogin    = isset($_POST['require_login']) ? true : false;
+        $old_reqlogin = defined('REQUIRE_LOGIN') ? REQUIRE_LOGIN : true;
+        $deftheme = defined('DEFAULT_THEME') ? DEFAULT_THEME : 'neon';
+        if ($newpw !== '' || $newsitepw !== '' || $newtitle !== '' || $newsubtitle !== '' || $validTz || $reqlogin !== $old_reqlogin) {
             $pw       = $newpw       !== '' ? $newpw       : ADMIN_PASSWORD;
             $sitepw   = $newsitepw   !== '' ? $newsitepw   : SITE_PASSWORD;
             $title    = $newtitle    !== '' ? $newtitle    : SITE_TITLE;
             $subtitle = $newsubtitle !== '' ? $newsubtitle : SITE_SUBTITLE;
             $timezone = $validTz            ? $newtimezone : SITE_TIMEZONE;
             file_put_contents(__DIR__ . '/config.php',
-                "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\n");
+                "<?php\nif (!defined('DND_APP')) { http_response_code(403); exit; }\ndefine('ADMIN_PASSWORD', " . var_export($pw, true) . ");\ndefine('SITE_PASSWORD', " . var_export($sitepw, true) . ");\ndefine('SITE_TITLE', " . var_export($title, true) . ");\ndefine('SITE_SUBTITLE', " . var_export($subtitle, true) . ");\ndefine('SITE_TIMEZONE', " . var_export($timezone, true) . ");\ndefine('REQUIRE_LOGIN', " . var_export($reqlogin, true) . ");\ndefine('DEFAULT_THEME', " . var_export($deftheme, true) . ");\n");
         }
         $flash = 'Settings saved.'; $flashType = 'success';
 
@@ -281,10 +370,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             saveData($data);
             $flash = 'Sign-up removed.'; $flashType = 'success';
         }
+    } elseif ($action === 'toggle_block_date' && isAdmin()) {
+        $date = $_POST['date'] ?? '';
+        if ($date !== '') {
+            if (!isset($data['blocked_dates'])) {
+                $data['blocked_dates'] = [];
+            }
+            $idx = array_search($date, $data['blocked_dates'], true);
+            if ($idx !== false) {
+                array_splice($data['blocked_dates'], $idx, 1);
+                $flash = 'Session unblocked.'; $flashType = 'success';
+            } else {
+                $data['blocked_dates'][] = $date;
+                $flash = 'Session blocked (DM said No).'; $flashType = 'success';
+            }
+            saveData($data);
+        }
+    } elseif ($action === 'delete_player_by_name' && isAdmin()) {
+        $name = trim($_POST['player_name_to_delete'] ?? '');
+        if ($name !== '') {
+            $initialCount = count($data['signups']);
+            $data['signups'] = array_values(array_filter($data['signups'], function ($s) use ($name) {
+                return strcasecmp($s['name'], $name) !== 0;
+            }));
+            saveData($data);
+            $removedCount = $initialCount - count($data['signups']);
+            $flash = "Removed $removedCount sign-up(s) for player '" . htmlspecialchars($name) . "'.";
+            $flashType = 'success';
+        } else {
+            $flash = 'Please enter a valid player name.';
+            $flashType = 'error';
+        }
     }
 
     $data     = loadData();
     $maxSlots = (int)($data['settings']['max_slots'] ?? 0);
+}
+
+// Recompute theme/banner after POST handling so a freshly saved theme renders immediately
+$currentTheme = $data['settings']['theme'] ?? (defined('DEFAULT_THEME') ? DEFAULT_THEME : 'neon');
+$bannerMode   = $data['settings']['banner_mode'] ?? 'default';
+if ($bannerMode === 'custom' && file_exists(__DIR__ . '/banner_custom.png')) {
+    $bannerUrl = 'banner_custom.png';
+} elseif ($currentTheme === 'fantasy') {
+    $bannerUrl = 'banner_fantasy.png';
+} elseif ($currentTheme === 'scifi') {
+    $bannerUrl = 'banner_scifi.png';
+} elseif ($currentTheme === 'grimdark') {
+    $bannerUrl = 'banner_grimdark.png';
+} elseif ($currentTheme === 'steampunk') {
+    $bannerUrl = 'banner_ebberon.png';
+} else {
+    $bannerUrl = 'banner_neon.png';
 }
 
 $available = getAvailableDates($data['settings']);
@@ -327,9 +464,9 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 <title><?= htmlspecialchars(SITE_TITLE) ?></title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="theme-<?= htmlspecialchars($currentTheme) ?>">
 
-<div class="alive-banner" id="main-banner" style="background-image:url('banner.png')"></div>
+<div class="alive-banner" id="main-banner" style="background-image:url('<?= htmlspecialchars($bannerUrl) ?>')"></div>
 
 <div class="wrap">
 
@@ -402,17 +539,20 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
                 $cnt     = count($players);
                 $isFull  = $maxSlots > 0 && $cnt >= $maxSlots;
                 $dow     = (int)date('w', strtotime($d));
+                $isBlocked = in_array($d, $data['blocked_dates'] ?? [], true);
             ?>
-            <div class="date-tile <?= $isFull ? 'tile-full' : '' ?>" data-date="<?= $d ?>"
-                 <?= !isAdmin() ? 'onclick="toggleDate(this)"' : '' ?>>
+            <div class="date-tile <?= $isFull ? 'tile-full' : '' ?> <?= $isBlocked ? 'tile-blocked' : '' ?>" data-date="<?= $d ?>"
+                 <?= (!isAdmin() && !$isBlocked) ? 'onclick="toggleDate(this)"' : '' ?>>
                 <div class="dt-meta">
                     <span class="dt-dow"><?= $DAY_FULL[$dow] ?></span>
                     <span class="dt-mdate"><?= date('M j', strtotime($d)) ?></span>
                 </div>
                 <div class="dt-players">
-                    <?php if (isAdmin()): foreach ($players as $p): ?>
-                    <span class="dt-chip">
-                        🗡 <?= htmlspecialchars($p['name']) ?>
+                    <?php if (isAdmin()): foreach ($players as $p_idx => $p): 
+                        $isWaiting = $maxSlots > 0 && $p_idx >= $maxSlots;
+                    ?>
+                    <span class="dt-chip <?= $isWaiting ? 'dt-chip-waiting' : '' ?>">
+                        <?= $isWaiting ? '⏳' : '🗡' ?> <?= htmlspecialchars($p['name']) ?>
                         <form method="post" style="margin:0;display:inline">
                             <input type="hidden" name="action" value="remove">
                             <input type="hidden" name="idx" value="<?= $p['idx'] ?>">
@@ -422,10 +562,32 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
                     </span>
                     <?php endforeach; endif; ?>
                 </div>
-                <?php if ($cnt > 0 || $maxSlots > 0): ?>
+                
+                <?php if (isAdmin()): ?>
+                <div class="dm-action-row" onclick="event.stopPropagation()">
+                    <form method="post" style="margin:0;display:inline">
+                        <input type="hidden" name="action" value="toggle_block_date">
+                        <input type="hidden" name="date" value="<?= $d ?>">
+                        <div class="btn-group-dm">
+                            <button type="submit" class="btn-dm-yes <?= !$isBlocked ? 'active' : '' ?>">Yes</button>
+                            <button type="submit" class="btn-dm-no <?= $isBlocked ? 'active' : '' ?>">No</button>
+                        </div>
+                    </form>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($isBlocked): ?>
+                <div class="dt-count count-blocked">DM: No</div>
+                <?php elseif ($cnt > 0 || $maxSlots > 0): ?>
                 <div class="dt-count <?= $isFull ? 'count-full' : '' ?>">
-                    <?php if ($isFull): ?>Full
-                    <?php elseif ($maxSlots > 0): ?><?= $cnt ?> / <?= $maxSlots ?>
+                    <?php if ($isFull): 
+                        $waitingCount = $cnt - $maxSlots;
+                        if ($waitingCount > 0):
+                            echo $maxSlots . ' / ' . $maxSlots . ' (+' . $waitingCount . ')';
+                        else:
+                            echo $maxSlots . ' / ' . $maxSlots;
+                        endif;
+                    elseif ($maxSlots > 0): ?><?= $cnt ?> / <?= $maxSlots ?>
                     <?php else: ?><?= $cnt ?>
                     <?php endif; ?>
                 </div>
@@ -458,11 +620,15 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     <?php $rank++; endforeach; endif; ?>
 </div>
 
+<!-- Session Sign-ups -->
+<?php echo $dateTilesHtml; ?>
+
 <!-- Admin settings -->
-<div class="card" id="admin">
-    <div class="card-title">⚙ Admin Settings</div>
-    <form method="post">
-        <input type="hidden" name="action" value="save_settings">
+<form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="save_settings">
+
+    <div class="card" id="admin">
+        <div class="card-title">⚙ Admin Settings</div>
 
         <div class="field">
             <label>Available Days of the Week</label>
@@ -518,6 +684,33 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
             <input type="number" name="max_slots" min="0" max="99"
                    value="<?= $maxSlots ?>" style="max-width:120px">
         </div>
+    </div>
+
+    <!-- Site Customization -->
+    <div class="card">
+        <div class="card-title">🎨 Site Customization</div>
+
+        <div class="field">
+            <label>Theme</label>
+            <select name="theme" id="theme-select" style="max-width:300px" onchange="previewTheme(this.value)">
+                <option value="neon" <?= ($data['settings']['theme'] ?? 'neon') === 'neon' ? 'selected' : '' ?>>Neon / Sci-Fi Grid</option>
+                <option value="scifi" <?= ($data['settings']['theme'] ?? '') === 'scifi' ? 'selected' : '' ?>>Sci-Fi Starship</option>
+                <option value="fantasy" <?= ($data['settings']['theme'] ?? '') === 'fantasy' ? 'selected' : '' ?>>Fantasy Parchment</option>
+                <option value="grimdark" <?= ($data['settings']['theme'] ?? '') === 'grimdark' ? 'selected' : '' ?>>Gothic Grim Dark</option>
+                <option value="steampunk" <?= ($data['settings']['theme'] ?? '') === 'steampunk' ? 'selected' : '' ?>>Eberron / Steampunk</option>
+            </select>
+        </div>
+
+        <div class="field">
+            <label>Custom Banner Image <span class="field-note">— upload PNG, JPG, GIF</span></label>
+            <input type="file" name="banner_image" accept="image/*">
+            <?php if (($data['settings']['banner_mode'] ?? 'default') === 'custom'): ?>
+                <div class="day-opt" style="margin-top: 10px; width: fit-content;">
+                    <input type="checkbox" name="reset_banner" value="1" id="reset_banner">
+                    <label for="reset_banner">Reset to Theme Default Banner</label>
+                </div>
+            <?php endif; ?>
+        </div>
 
         <div class="field">
             <label>Site Title <span class="field-note">— leave blank to keep current</span></label>
@@ -539,11 +732,31 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
             <input type="password" name="new_pw" placeholder="New admin password…" style="max-width:280px">
         </div>
 
-        <button type="submit" class="btn btn-primary">Save Settings</button>
+        <div class="field">
+            <label>Authentication</label>
+            <div class="day-opt" style="width:fit-content">
+                <input type="checkbox" name="require_login" value="1" id="require_login"
+                       <?= REQUIRE_LOGIN ? 'checked' : '' ?>>
+                <label for="require_login">Require Password to Access Site</label>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Settings & Customization</button>
+    </div>
+</form>
+
+<!-- Delete Player by Name -->
+<div class="card">
+    <div class="card-title">🗑 Delete Player By Name</div>
+    <form method="post" onsubmit="return confirm('Are you sure you want to delete all sign-ups for this player name?')">
+        <input type="hidden" name="action" value="delete_player_by_name">
+        <div class="field">
+            <label for="player-name-delete">Player Name</label>
+            <input type="text" id="player-name-delete" name="player_name_to_delete" placeholder="Enter player name to delete…" required style="max-width:340px" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-primary">Delete Player</button>
     </form>
 </div>
-
-<?php echo $dateTilesHtml; ?>
 <?php endif; ?>
 
 <!-- Admin login -->
@@ -564,12 +777,25 @@ $DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 </div>
 
 <script>
+// Preserve scroll position across admin form posts (e.g. DM Yes/No, save settings)
+document.addEventListener('submit', () => {
+    try { sessionStorage.setItem('dnd_scroll', String(window.scrollY)); } catch (e) {}
+});
+window.addEventListener('DOMContentLoaded', () => {
+    const y = sessionStorage.getItem('dnd_scroll');
+    if (y !== null) {
+        window.scrollTo(0, parseInt(y, 10));
+        sessionStorage.removeItem('dnd_scroll');
+    }
+});
+
 const IS_ADMIN  = <?= isAdmin() ? 'true' : 'false' ?>;
 const nameInput = document.getElementById('player-name');
 
 let state = {
     signups:  <?= json_encode(array_values($data['signups'])) ?>,
-    maxSlots: <?= $maxSlots ?>
+    maxSlots: <?= $maxSlots ?>,
+    blockedDates: <?= json_encode($data['blocked_dates'] ?? []) ?>
 };
 
 if (nameInput) {
@@ -601,10 +827,8 @@ async function toggleDate(tile) {
     const name = nameInput?.value.trim();
     if (!name) { flashInput(nameInput); nameInput.scrollIntoView({behavior:'smooth',block:'center'}); return; }
 
-    const bd    = getByDate();
-    const mine  = (bd[tile.dataset.date] || []).some(p => p.toLowerCase() === name.toLowerCase());
-    const count = (bd[tile.dataset.date] || []).length;
-    if (!mine && state.maxSlots > 0 && count >= state.maxSlots) return;
+    const isBlocked = state.blockedDates.includes(tile.dataset.date);
+    if (isBlocked) return;
 
     tile.classList.add('tile-loading');
     try {
@@ -636,30 +860,53 @@ function refreshTiles() {
         const mine    = name && players.some(p => p.toLowerCase() === name);
         const isFull  = state.maxSlots > 0 && count >= state.maxSlots;
         const best    = !isFull && maxCount > 0 && count === maxCount;
+        const isBlocked = state.blockedDates.includes(tile.dataset.date);
 
         tile.classList.toggle('signed-up',    mine);
         tile.classList.toggle('most-popular', best);
-        tile.classList.toggle('tile-full',    isFull && !mine);
+        tile.classList.toggle('tile-full',    isFull && !mine && !isBlocked);
+        tile.classList.toggle('tile-blocked', isBlocked);
 
         tile.querySelector('.dt-players').innerHTML =
-            players.map(p => `<span class="dt-chip">🗡 ${esc(p)}</span>`).join('');
+            players.map((p, idx) => {
+                const isWaiting = state.maxSlots > 0 && idx >= state.maxSlots;
+                return `<span class="dt-chip ${isWaiting ? 'dt-chip-waiting' : ''}">${isWaiting ? '⏳' : '🗡'} ${esc(p)}</span>`;
+            }).join('');
 
         let c = tile.querySelector('.dt-count');
-        const showCount = count > 0 || state.maxSlots > 0;
-        if (showCount) {
+        if (isBlocked) {
             if (!c) { c = Object.assign(document.createElement('div'), {className:'dt-count'}); tile.appendChild(c); }
-            c.classList.toggle('count-full', isFull);
-            if (isFull)                  c.textContent = 'Full';
-            else if (state.maxSlots > 0) c.textContent = `${count} / ${state.maxSlots}`;
-            else if (count > 0)          c.textContent = count;
-            else                         { c.remove(); c = null; }
-        } else if (c) { c.remove(); }
+            c.className = 'dt-count count-blocked';
+            c.textContent = 'DM: No';
+        } else {
+            const showCount = count > 0 || state.maxSlots > 0;
+            if (showCount) {
+                if (!c) { c = Object.assign(document.createElement('div'), {className:'dt-count'}); tile.appendChild(c); }
+                c.className = 'dt-count';
+                c.classList.toggle('count-full', isFull);
+                if (isFull) {
+                    const waitingCount = count - state.maxSlots;
+                    if (waitingCount > 0) {
+                        c.textContent = `${state.maxSlots} / ${state.maxSlots} (+${waitingCount})`;
+                    } else {
+                        c.textContent = `${state.maxSlots} / ${state.maxSlots}`;
+                    }
+                }
+                else if (state.maxSlots > 0) c.textContent = `${count} / ${state.maxSlots}`;
+                else if (count > 0)          c.textContent = count;
+                else                         { c.remove(); c = null; }
+            } else if (c) { c.remove(); }
+        }
     });
 }
 
 async function post(params) {
     const body = Object.entries(params).map(([k,v]) => encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
     return (await fetch('', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})).json();
+}
+
+function previewTheme(theme) {
+    document.body.className = 'theme-' + theme;
 }
 
 function dateDow(str) { const [y,m,d] = str.split('-').map(Number); return new Date(y,m-1,d).getDay(); }
